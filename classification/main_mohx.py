@@ -1,3 +1,5 @@
+import math
+
 from util import get_num_lines, get_vocab, embed_sequence, get_word2idx_idx2word, get_embedding_matrix
 from util import TextDatasetWithGloveElmoSuffix as TextDataset
 from util import evaluate
@@ -85,98 +87,128 @@ ten_folds = []
 for i in range(10):
     ten_folds.append((sentences[i*65:(i+1)*65], labels[i*65:(i+1)*65]))
 
-optimal_f1s = []
-for i in range(10):
-    '''
-    2. 3
-    set up Dataloader for batching
-    '''
-    training_sentences = []
-    training_labels = []
-    for j in range(10):
-        if j != i:
-            training_sentences.extend(ten_folds[j][0])
-            training_labels.extend(ten_folds[j][1])
-    training_dataset_mohX = TextDataset(training_sentences, training_labels)
-    val_dataset_mohX = TextDataset(ten_folds[i][0], ten_folds[i][1])
 
-    # Data-related hyperparameters
-    batch_size = 10
-    # Set up a DataLoader for the training, validation, and test dataset
-    train_dataloader_mohX = DataLoader(dataset=training_dataset_mohX, batch_size=batch_size, shuffle=True,
-                                      collate_fn=TextDataset.collate_fn)
-    val_dataloader_mohX = DataLoader(dataset=val_dataset_mohX, batch_size=batch_size, shuffle=True,
-                                      collate_fn=TextDataset.collate_fn)
-    """
-    3. Model training
-    """
-    '''
-    3. 1 
-    set up model, loss criterion, optimizer
-    '''
-    # Instantiate the model
-    # embedding_dim = glove + elmo + suffix indicator
-    # dropout1: dropout on input to RNN
-    # dropout2: dropout in RNN; would be used if num_layers!=1
-    # dropout3: dropout on hidden state of RNN to linear layer
-    rnn_clf = RNNSequenceClassifier(num_classes=2, embedding_dim=300+1024+50, hidden_size=300, num_layers=1, bidir=True,
-                     dropout1=0.2, dropout2=0, dropout3=0.2)
-    # Move the model to the GPU if available
-    if using_GPU:
-        rnn_clf = rnn_clf.cuda()
-    # Set up criterion for calculating loss
-    nll_criterion = nn.NLLLoss()
-    # Set up an optimizer for updating the parameters of the rnn_clf
-    rnn_clf_optimizer = optim.SGD(rnn_clf.parameters(), lr=0.02, momentum=0.9)
-    # Number of epochs (passes through the dataset) to train the model for.
-    num_epochs = 30
+def train_model():
+    optimal_f1s = []
+    optimal_ps = []
+    optimal_rs = []
+    optimal_accs = []
+    for i in tqdm(range(10)):
+        '''
+        2. 3
+        set up Dataloader for batching
+        '''
+        training_sentences = []
+        training_labels = []
+        for j in range(10):
+            if j != i:
+                training_sentences.extend(ten_folds[j][0])
+                training_labels.extend(ten_folds[j][1])
+        training_dataset_mohX = TextDataset(training_sentences, training_labels)
+        val_dataset_mohX = TextDataset(ten_folds[i][0], ten_folds[i][1])
 
-    '''
-    3. 2
-    train model
-    '''
-    training_loss = []
-    val_loss = []
-    training_f1 = []
-    val_f1 = []
-    # A counter for the number of gradient updates
-    num_iter = 0
-    train_dataloader = train_dataloader_mohX
-    val_dataloader = val_dataloader_mohX
-    for epoch in range(num_epochs):
-        print("Starting epoch {}".format(epoch + 1))
-        for (example_text, example_lengths, labels) in train_dataloader:
-            example_text = Variable(example_text)
-            example_lengths = Variable(example_lengths)
-            labels = Variable(labels)
-            if using_GPU:
-                example_text = example_text.cuda()
-                example_lengths = example_lengths.cuda()
-                labels = labels.cuda()
-            # predicted shape: (batch_size, 2)
-            predicted = rnn_clf(example_text, example_lengths)
-            batch_loss = nll_criterion(predicted, labels)
-            rnn_clf_optimizer.zero_grad()
-            batch_loss.backward()
-            rnn_clf_optimizer.step()
-            num_iter += 1
-            # Calculate validation and training set loss and accuracy every 200 gradient updates
-            if num_iter % 200 == 0:
-                avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(val_dataloader, rnn_clf, nll_criterion, using_GPU)
-                val_loss.append(avg_eval_loss)
-                val_f1.append(f1)
-                print(
-                    "Iteration {}. Validation Loss {}. Validation Accuracy {}. Validation Precision {}. Validation Recall {}. Validation F1 {}. Validation class-wise F1 {}.".format(
-                        num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
-                # filename = '../models/LSTMSuffixElmoAtt_???_all_iter_' + str(num_iter) + '.pt'
-                # torch.save(rnn_clf, filename)
-                avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(train_dataloader, rnn_clf, nll_criterion, using_GPU)
-                training_loss.append(avg_eval_loss)
-                training_f1.append(f1)
-                print(
-                    "Iteration {}. Training Loss {}. Training Accuracy {}. Training Precision {}. Training Recall {}. Training F1 {}. Training class-wise F1 {}.".format(
-                        num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
-    print("Training done for fold {}".format(i))
+        # Data-related hyperparameters
+        batch_size = 10
+        # Set up a DataLoader for the training, validation, and test dataset
+        train_dataloader_mohX = DataLoader(dataset=training_dataset_mohX, batch_size=batch_size, shuffle=True,
+                                          collate_fn=TextDataset.collate_fn)
+        val_dataloader_mohX = DataLoader(dataset=val_dataset_mohX, batch_size=batch_size, shuffle=True,
+                                          collate_fn=TextDataset.collate_fn)
+        """
+        3. Model training
+        """
+        '''
+        3. 1 
+        set up model, loss criterion, optimizer
+        '''
+        # Instantiate the model
+        # embedding_dim = glove + elmo + suffix indicator
+        # dropout1: dropout on input to RNN
+        # dropout2: dropout in RNN; would be used if num_layers!=1
+        # dropout3: dropout on hidden state of RNN to linear layer
+        rnn_clf = RNNSequenceClassifier(num_classes=2, embedding_dim=300+1024+50, hidden_size=300, num_layers=1, bidir=True,
+                         dropout1=0.2, dropout2=0, dropout3=0.2)
+        # Move the model to the GPU if available
+        if using_GPU:
+            rnn_clf = rnn_clf.cuda()
+        # Set up criterion for calculating loss
+        nll_criterion = nn.NLLLoss()
+        # Set up an optimizer for updating the parameters of the rnn_clf
+        rnn_clf_optimizer = optim.SGD(rnn_clf.parameters(), lr=0.02, momentum=0.9)
+        # Number of epochs (passes through the dataset) to train the model for.
+        num_epochs = 30
+
+        '''
+        3. 2
+        train model
+        '''
+        training_loss = []
+        val_loss = []
+        training_f1 = []
+        val_f1 = []
+        val_p = []
+        val_r = []
+        val_acc = []
+
+        # A counter for the number of gradient updates
+        num_iter = 0
+        train_dataloader = train_dataloader_mohX
+        val_dataloader = val_dataloader_mohX
+        for epoch in range(num_epochs):
+            # print("Starting epoch {}".format(epoch + 1))
+            for (example_text, example_lengths, labels) in train_dataloader:
+                example_text = Variable(example_text)
+                example_lengths = Variable(example_lengths)
+                labels = Variable(labels)
+                if using_GPU:
+                    example_text = example_text.cuda()
+                    example_lengths = example_lengths.cuda()
+                    labels = labels.cuda()
+                # predicted shape: (batch_size, 2)
+                predicted = rnn_clf(example_text, example_lengths)
+                batch_loss = nll_criterion(predicted, labels)
+                rnn_clf_optimizer.zero_grad()
+                batch_loss.backward()
+                rnn_clf_optimizer.step()
+                num_iter += 1
+                # Calculate validation and training set loss and accuracy every 200 gradient updates
+                if num_iter % 200 == 0:
+                    avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(val_dataloader, rnn_clf, nll_criterion, using_GPU)
+                    val_loss.append(avg_eval_loss)
+                    val_f1.append(f1)
+                    val_p.append(precision)
+                    val_r.append(recall)
+                    val_acc.append(eval_accuracy.item())
+                    # print(
+                    #     "Iteration {}. Validation Loss {}. Validation Accuracy {}. Validation Precision {}. Validation Recall {}. Validation F1 {}. Validation class-wise F1 {}.".format(
+                    #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
+                    # filename = f'../models/classification/MOHX_fold_{str(i)}_iter_{str(num_iter)}.pt'
+                    # torch.save(rnn_clf, filename)
+                    avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(train_dataloader, rnn_clf, nll_criterion, using_GPU)
+                    training_loss.append(avg_eval_loss)
+                    training_f1.append(f1)
+                    # print(
+                    #     "Iteration {}. Training Loss {}. Training Accuracy {}. Training Precision {}. Training Recall {}. Training F1 {}. Training class-wise F1 {}.".format(
+                    #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
+        # print("Training done for fold {}".format(i))
+
+        # store the best f1
+        idx = 0
+        if math.isnan(max(val_f1)):
+            optimal_f1s.append(max(val_f1[6:]))
+            idx = val_f1.index(optimal_f1s[-1])
+            optimal_ps.append(val_p[idx])
+            optimal_rs.append(val_r[idx])
+            optimal_accs.append(val_acc[idx])
+        else:
+            optimal_f1s.append(max(val_f1))
+            idx = val_f1.index(optimal_f1s[-1])
+            optimal_ps.append(val_p[idx])
+            optimal_rs.append(val_r[idx])
+            optimal_accs.append(val_acc[idx])
+    return np.mean(np.array(optimal_ps)), np.mean(np.array(optimal_rs)), np.mean(np.array(optimal_f1s)), np.mean(np.array(optimal_accs))
+    # print('F1 on MOH-X by 10-fold = ', optimal_f1s)
+    # print('F1 on MOH-X = ', np.mean(np.array(optimal_f1s)))
 
     """
     3.3
@@ -201,13 +233,6 @@ for i in range(10):
 #     plt.legend(['Validation loss', 'Training loss'], loc='upper right')
 #     plt.show()
 
-    """
-    store the best f1
-    """
-    optimal_f1s.append(max(val_f1))
-
-print('F1 on MOH-X by 10-fold = ', optimal_f1s)
-print('F1 on MOH-X = ', np.mean(np.array(optimal_f1s)))
 # plt.figure(2)
 # plt.title('F1 for MOH-X dataset on ten folds')
 # plt.xlabel('fold')

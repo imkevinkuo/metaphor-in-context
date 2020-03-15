@@ -180,7 +180,7 @@ def evaluate(evaluation_dataloader, model, criterion, using_GPU):
         predicted = model(eval_text, eval_lengths)
         # Calculate loss for this test batch. This is averaged, so multiply
         # by the number of examples in batch to get a total.
-        total_eval_loss += criterion(predicted, eval_labels).data[0] * eval_labels.size(0)
+        total_eval_loss += criterion(predicted, eval_labels).item() * eval_labels.size(0)
         _, predicted_labels = torch.max(predicted.data, 1)
         total_examples += eval_labels.size(0)
         num_correct += torch.sum(predicted_labels == eval_labels.data)
@@ -201,7 +201,7 @@ def evaluate(evaluation_dataloader, model, criterion, using_GPU):
 
     # Set the model back to train mode, which activates dropout again.
     model.train()
-    print(confusion_matrix)
+    # print(confusion_matrix)
     return average_eval_loss, accuracy, precision, recall, met_f1, class_wise_f1
 
 # Make sure to subclass torch.utils.data.Dataset

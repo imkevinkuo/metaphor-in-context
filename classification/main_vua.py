@@ -1,3 +1,5 @@
+from tqdm import tqdm
+
 from util import get_num_lines, get_vocab, embed_sequence, get_word2idx_idx2word, get_embedding_matrix
 from util import TextDatasetWithGloveElmoSuffix as TextDataset
 from util import evaluate
@@ -116,92 +118,98 @@ set up model, loss criterion, optimizer
 # dropout1: dropout on input to RNN
 # dropout2: dropout in RNN; would be used if num_layers=1
 # dropout3: dropout on hidden state of RNN to linear layer
-rnn_clf = RNNSequenceClassifier(num_classes=2, embedding_dim=300 + 1024 + 50, hidden_size=300, num_layers=1, bidir=True,
-                                dropout1=0.3, dropout2=0.2, dropout3=0.2)
-# Move the model to the GPU if available
-if using_GPU:
-    rnn_clf = rnn_clf.cuda()
-# Set up criterion for calculating loss
-nll_criterion = nn.NLLLoss()
-# Set up an optimizer for updating the parameters of the rnn_clf
-rnn_clf_optimizer = optim.SGD(rnn_clf.parameters(), lr=0.01,momentum=0.9)
-# Number of epochs (passes through the dataset) to train the model for.
-num_epochs = 20
 
-'''
-3. 2
-train model
-'''
-training_loss = []
-val_loss = []
-training_f1 = []
-val_f1 = []
-# A counter for the number of gradient updates
-num_iter = 0
-for epoch in range(num_epochs):
-    print("Starting epoch {}".format(epoch + 1))
-    for (example_text, example_lengths, labels) in train_dataloader_vua:
-        example_text = Variable(example_text)
-        example_lengths = Variable(example_lengths)
-        labels = Variable(labels)
-        if using_GPU:
-            example_text = example_text.cuda()
-            example_lengths = example_lengths.cuda()
-            labels = labels.cuda()
-        # predicted shape: (batch_size, 2)
-        predicted = rnn_clf(example_text, example_lengths)
-        batch_loss = nll_criterion(predicted, labels)
-        rnn_clf_optimizer.zero_grad()
-        batch_loss.backward()
-        rnn_clf_optimizer.step()
-        num_iter += 1
-        # Calculate validation and training set loss and accuracy every 200 gradient updates
-        if num_iter % 200 == 0:
-            avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(val_dataloader_vua, rnn_clf,
-                                                                                   nll_criterion, using_GPU)
-            val_loss.append(avg_eval_loss)
-            val_f1.append(f1)
-            print(
-                "Iteration {}. Validation Loss {}. Validation Accuracy {}. Validation Precision {}. Validation Recall {}. Validation F1 {}. Validation class-wise F1 {}.".format(
-                    num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
-            # filename = '../models/LSTMSuffixElmoAtt_???_all_iter_' + str(num_iter) + '.pt'
-            # torch.save(rnn_clf, filename)
-#             avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(train_dataloader_vua, rnn_clf,
-#                                                                                    nll_criterion, using_GPU)
-#             training_loss.append(avg_eval_loss)
-#             training_f1.append(f1)
-#             print(
-#                 "Iteration {}. Training Loss {}. Training Accuracy {}. Training Precision {}. Training Recall {}. Training F1 {}. Training class-wise F1 {}.".format(
-#                     num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
-print("Training done!")
+
+def train_model():
+    rnn_clf = RNNSequenceClassifier(num_classes=2, embedding_dim=300 + 1024 + 50, hidden_size=300, num_layers=1, bidir=True,
+                                    dropout1=0.3, dropout2=0.2, dropout3=0.2)
+    # Move the model to the GPU if available
+    if using_GPU:
+        rnn_clf = rnn_clf.cuda()
+    # Set up criterion for calculating loss
+    nll_criterion = nn.NLLLoss()
+    # Set up an optimizer for updating the parameters of the rnn_clf
+    rnn_clf_optimizer = optim.SGD(rnn_clf.parameters(), lr=0.01,momentum=0.9)
+    # Number of epochs (passes through the dataset) to train the model for.
+    num_epochs = 20
+
+    '''
+    3. 2
+    train model
+    '''
+    training_loss = []
+    val_loss = []
+    training_f1 = []
+    val_f1 = []
+    # A counter for the number of gradient updates
+    num_iter = 0
+    for epoch in tqdm(range(num_epochs)):
+        # print("Starting epoch {}".format(epoch + 1))
+        for (example_text, example_lengths, labels) in train_dataloader_vua:
+            example_text = Variable(example_text)
+            example_lengths = Variable(example_lengths)
+            labels = Variable(labels)
+            if using_GPU:
+                example_text = example_text.cuda()
+                example_lengths = example_lengths.cuda()
+                labels = labels.cuda()
+            # predicted shape: (batch_size, 2)
+            predicted = rnn_clf(example_text, example_lengths)
+            batch_loss = nll_criterion(predicted, labels)
+            rnn_clf_optimizer.zero_grad()
+            batch_loss.backward()
+            rnn_clf_optimizer.step()
+            num_iter += 1
+            # Calculate validation and training set loss and accuracy every 200 gradient updates
+            if num_iter % 200 == 0:
+                avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(val_dataloader_vua, rnn_clf,
+                                                                                       nll_criterion, using_GPU)
+                val_loss.append(avg_eval_loss)
+                val_f1.append(f1)
+                # print(
+                #     "Iteration {}. Validation Loss {}. Validation Accuracy {}. Validation Precision {}. Validation Recall {}. Validation F1 {}. Validation class-wise F1 {}.".format(
+                #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
+                # filename = f'../models/classification/VUA_iter_{str(num_iter)}.pt'
+                # torch.save(rnn_clf, filename)
+                # avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(train_dataloader_vua, rnn_clf,
+                #                                                                        nll_criterion, using_GPU)
+                # training_loss.append(avg_eval_loss)
+                # training_f1.append(f1)
+                # print(
+                #     "Iteration {}. Training Loss {}. Training Accuracy {}. Training Precision {}. Training Recall {}. Training F1 {}. Training class-wise F1 {}.".format(
+                #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
+    # print("Training done!")
+    return rnn_clf, nll_criterion
 
 # cannot display the graph in terminal on remote server
 # """
 # 3.3
 # plot the training process: MET F1 and losses for validation and training dataset
 # """
-# plt.figure(0)
-# plt.title('F1 for VUA dataset')
-# plt.xlabel('iteration (unit:200)')
-# plt.ylabel('F1')
-# plt.plot(val_f1,'g')
-# plt.plot(training_f1, 'b')
-# plt.legend(['Validation F1', 'Training F1'], loc='upper right')
-# plt.show()
-#
-#
-# plt.figure(1)
-# plt.title('Loss for VUA dataset')
-# plt.xlabel('iteration (unit:200)')
-# plt.ylabel('Loss')
-# plt.plot(val_loss,'g')
-# plt.plot(training_loss, 'b')
-# plt.legend(['Validation loss', 'Training loss'], loc='upper right')
-# plt.show()
+# def plot_training():
+    # plt.figure(0)
+    # plt.title('F1 for VUA dataset')
+    # plt.xlabel('iteration (unit:200)')
+    # plt.ylabel('F1')
+    # plt.plot(val_f1,'g')
+    # plt.plot(training_f1, 'b')
+    # plt.legend(['Validation F1', 'Training F1'], loc='upper right')
+    # plt.show()
+    #
+    #
+    # plt.figure(1)
+    # plt.title('Loss for VUA dataset')
+    # plt.xlabel('iteration (unit:200)')
+    # plt.ylabel('Loss')
+    # plt.plot(val_loss,'g')
+    # plt.plot(training_loss, 'b')
+    # plt.legend(['Validation loss', 'Training loss'], loc='upper right')
+    # plt.show()
 
 """
 4. test the model
 the following code is for test data of VUA
+test_dataloader_vua defined in load_data()
 """
 '''
 VUA
@@ -214,8 +222,56 @@ test_dataset_vua = TextDataset([example[0] for example in embedded_test_vua],
                                [example[1] for example in embedded_test_vua])
 test_dataloader_vua = DataLoader(dataset=test_dataset_vua, batch_size=batch_size,
                                  collate_fn=TextDataset.collate_fn)
-avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(test_dataloader_vua, rnn_clf,
-                                                                       nll_criterion, using_GPU)
-print("Test Accuracy {}. Test Precision {}. Test Recall {}. Test F1 {}. Test class-wise F1 {}.".format(
-    eval_accuracy, precision, recall, f1, fus_f1))
 
+
+def test_model(rnn_clf, nll_criterion):
+    avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(test_dataloader_vua, rnn_clf,
+                                                                           nll_criterion, using_GPU)
+    # print("Test Accuracy {}. Test Precision {}. Test Recall {}. Test F1 {}. Test class-wise F1 {}.".format(
+    #     eval_accuracy, precision, recall, f1, fus_f1))
+    return precision, recall, f1, eval_accuracy.item(), fus_f1
+
+
+# Some more code
+def test_model_from_file(filename, nll_criterion, test_dataloader_vua, using_GPU):
+    rnn_clf = torch.load(filename)
+    return test_model(rnn_clf, nll_criterion, test_dataloader_vua, using_GPU)
+
+
+def create_formatted_csv(filename):
+    d = {}
+    with open("../corpora/VUA_corpus/vuamc_corpus_test.csv", encoding='latin-1') as f:
+        lines = csv.reader(f)
+        next(lines)
+        for line in lines:
+            if len(line) > 0:
+                txt_idx = line[0]
+                sentence_idx = line[1]
+                sentence_txt = line[2]
+                if txt_idx not in d:
+                    d[txt_idx] = {}
+                if sentence_idx not in d[txt_idx]:
+                    d[txt_idx][sentence_idx] = {}
+                d[txt_idx][sentence_idx] = sentence_txt
+
+    examples = [["text_idx", "sentence_idx", "verb", "sentence", "verb_idx", "label"]]
+
+    # Generating the verb column is an issue - stemming/lemmatizing doesn't give me what the authors got
+    # But it doesn't really matter since the model uses the original verb in the sentence
+    with open("../corpora/VUA_corpus/verb_tokens_test.csv", encoding='latin-1') as f:
+        lines = csv.reader(f, delimiter="_")
+        for line in lines:
+            if len(line) > 0:
+                txt_idx = line[0]
+                sentence_idx = line[1]
+                verb_idx = int(line[2]) - 1
+                sentence_txt = d[txt_idx][sentence_idx]
+                verb = sentence_txt.split()[verb_idx]  # this doesn't matter
+                label = '0'  # this doesn't matter either
+                examples.append([txt_idx, sentence_idx, verb, sentence_txt, verb_idx, label])
+
+    with open(filename, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows(examples)
+
+    return examples

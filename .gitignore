@@ -1,0 +1,10 @@
+classification/__pycache__/
+sequence/__pycache__/
+__pycache__
+.idea
+corpora
+data
+elmo
+glove
+models
+predictions

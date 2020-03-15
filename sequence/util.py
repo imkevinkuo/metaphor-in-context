@@ -235,7 +235,7 @@ def evaluate(idx2pos, evaluation_dataloader, model, criterion, using_GPU):
 
     # Set the model back to train mode, which activates dropout again.
     model.train()
-    return average_eval_loss.data[0], print_info(confusion_matrix, idx2pos)
+    return average_eval_loss.item(), print_info(confusion_matrix, idx2pos)
 
 
 def update_confusion_matrix(matrix, predictions, labels, pos_seqs):
@@ -324,7 +324,8 @@ def write_predictions(raw_dataset, evaluation_dataloader, model, using_GPU, rawd
     # append predictions to the original data
     data[0].append('prediction')
     for i in range(len(predictions)):
-        data[i + 1].append(predictions[i])
+        tensor_values = [pred_tensor.item() for pred_tensor in predictions[i]]
+        data[i + 1].append(tensor_values)
     return data
 
 
@@ -346,7 +347,7 @@ def print_info(matrix, idx2pos):
         recall = 100 * grid[1, 1] / np.sum(grid[:, 1])
         f1 = 2 * precision * recall / (precision + recall)
         accuracy = 100 * (grid[1, 1] + grid[0, 0]) / np.sum(grid)
-        print('PRFA performance for ', pos_tag, precision, recall, f1, accuracy)
+        # print('PRFA performance for ', pos_tag, precision, recall, f1, accuracy)
         result.append([precision, recall, f1, accuracy])
     return np.array(result)
 
@@ -446,26 +447,26 @@ def get_performance_VUAverb_test():
         confusion_matrix[genre_idx][pred][label] += 1
     assert (np.sum(confusion_matrix) == len(ID_verbidx_label))
 
-    print('Tagging model performance on test-verb: genre')
+    # print('Tagging model performance on test-verb: genre')
     avg_performance = []
     for i in range(len(genres)):
         precision = 100 * confusion_matrix[i, 1, 1] / np.sum(confusion_matrix[i, 1])
         recall = 100 * confusion_matrix[i, 1, 1] / np.sum(confusion_matrix[i, :, 1])
         f1 = 2 * precision * recall / (precision + recall)
         accuracy = 100 * (confusion_matrix[i, 1, 1] + confusion_matrix[i, 0, 0]) / np.sum(confusion_matrix[i])
-        print(genres[i], 'Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
+        # print(genres[i], 'Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
         avg_performance.append([precision, recall, f1, accuracy])
     avg_performance = np.array(avg_performance)
 
-    print('Tagging model performance on test-verb: regardless of genre')
+    # print('Tagging model performance on test-verb: regardless of genre')
     confusion_matrix = confusion_matrix.sum(axis=0)
     precision = 100 * confusion_matrix[1, 1] / np.sum(confusion_matrix[1])
     recall = 100 * confusion_matrix[1, 1] / np.sum(confusion_matrix[:, 1])
     f1 = 2 * precision * recall / (precision + recall)
     accuracy = 100 * (confusion_matrix[1, 1] + confusion_matrix[0, 0]) / np.sum(confusion_matrix)
-    print('Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
-
-    return avg_performance.mean(0)
+    # print('Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
+    return precision, recall, f1, accuracy
+    # return avg_performance.mean(0)
 
 
 def get_performance_VUA_test():
@@ -495,26 +496,26 @@ def get_performance_VUA_test():
             genre_idx = genres.index(genre)
             confusion_matrix[genre_idx][pred][label] += 1
 
-    print('Tagging model performance on test-sequence: genre')
+    # print('Tagging model performance on test-sequence: genre')
     avg_performance = []
     for i in range(len(genres)):
         precision = 100 * confusion_matrix[i, 1, 1] / np.sum(confusion_matrix[i, 1])
         recall = 100 * confusion_matrix[i, 1, 1] / np.sum(confusion_matrix[i, :, 1])
         f1 = 2 * precision * recall / (precision + recall)
         accuracy = 100 * (confusion_matrix[i, 1, 1] + confusion_matrix[i, 0, 0]) / np.sum(confusion_matrix[i])
-        print(genres[i], 'Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
+        # print(genres[i], 'Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
         avg_performance.append([precision, recall, f1, accuracy])
     avg_performance = np.array(avg_performance)
 
-    print('Tagging model performance on test-sequence: regardless of genre')
+    # print('Tagging model performance on test-sequence: regardless of genre')
     confusion_matrix = confusion_matrix.sum(axis=0)
     precision = 100 * confusion_matrix[1, 1] / np.sum(confusion_matrix[1])
     recall = 100 * confusion_matrix[1, 1] / np.sum(confusion_matrix[:, 1])
     f1 = 2 * precision * recall / (precision + recall)
     accuracy = 100 * (confusion_matrix[1, 1] + confusion_matrix[0, 0]) / np.sum(confusion_matrix)
-    print('Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
-
-    return avg_performance.mean(0)
+    # print('Precision, Recall, F1, Accuracy: ', precision, recall, f1, accuracy)
+    return precision, recall, f1, accuracy
+    # return avg_performance.mean(0)
 
 
 # Make sure to subclass torch.utils.data.Dataset
