@@ -204,6 +204,39 @@ def evaluate(evaluation_dataloader, model, criterion, using_GPU):
     # print(confusion_matrix)
     return average_eval_loss, accuracy, precision, recall, met_f1, class_wise_f1
 
+
+def predict(evaluation_dataloader, model, using_GPU):
+    """
+    Evaluate the model on the given evaluation_dataloader
+
+    :param evaluation_dataloader:
+    :param model:
+    :param criterion: loss criterion
+    :param using_GPU: a boolean
+    :return:
+    """
+    # Set model to eval mode, which turns off dropout.
+    model.eval()
+
+    predictions = []
+    for (eval_text, eval_lengths, eval_labels) in evaluation_dataloader:
+        eval_text = Variable(eval_text, volatile=True)
+        eval_lengths = Variable(eval_lengths, volatile=True)
+        eval_labels = Variable(eval_labels, volatile=True)
+        if using_GPU:
+            eval_text = eval_text.cuda()
+            eval_lengths = eval_lengths.cuda()
+            eval_labels = eval_labels.cuda()
+
+        predicted = model(eval_text, eval_lengths)
+        _, predicted_labels = torch.max(predicted.data, 1)
+        predictions.append(predicted_labels)
+
+    # Set the model back to train mode, which activates dropout again.
+    model.train()
+    return torch.cat(predictions, 0)
+
+
 # Make sure to subclass torch.utils.data.Dataset
 class TextDatasetWithGloveElmoSuffix(Dataset):
     def __init__(self, embedded_text, labels, max_sequence_length=100):

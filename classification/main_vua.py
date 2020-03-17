@@ -2,7 +2,7 @@ from tqdm import tqdm
 
 from util import get_num_lines, get_vocab, embed_sequence, get_word2idx_idx2word, get_embedding_matrix
 from util import TextDatasetWithGloveElmoSuffix as TextDataset
-from util import evaluate
+from util import evaluate, predict
 from model import RNNSequenceClassifier
 
 import torch
@@ -55,7 +55,7 @@ with open('../data/VUA/VUA_formatted_test.csv', encoding='latin-1') as f:
     lines = csv.reader(f)
     next(lines)
     for line in lines:
-        raw_test_vua.append([line[3], int(line[4]), int(line[5])])
+        raw_test_vua.append([line[3], int(line[4]), int(line[5]), f"{line[0]}_{line[1]}_{int(line[4])+1}"])
 print('VUA dataset division: ', len(raw_train_vua), len(raw_val_vua), len(raw_test_vua))
 
 """
@@ -167,7 +167,7 @@ def train_model():
                 val_loss.append(avg_eval_loss)
                 val_f1.append(f1)
                 # print(
-                #     "Iteration {}. Validation Loss {}. Validation Accuracy {}. Validation Precision {}. Validation Recall {}. Validation F1 {}. Validation class-wise F1 {}.".format(
+                #     "Iteration {}. Validation Loss {}. Accuracy {}. Precision {}. Recall {}. F1 {}. class-wise F1 {}.".format(
                 #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
                 # filename = f'../models/classification/VUA_iter_{str(num_iter)}.pt'
                 # torch.save(rnn_clf, filename)
@@ -216,7 +216,7 @@ VUA
 '''
 elmos_test_vua = h5py.File('../elmo/VUA_test.hdf5', 'r')
 embedded_test_vua = [[embed_sequence(example[0], example[1], word2idx,
-                                     glove_embeddings, elmos_test_vua, suffix_embeddings), example[2]]
+                                     glove_embeddings, elmos_test_vua, suffix_embeddings), example[2], example[3]]
                      for example in raw_test_vua]
 test_dataset_vua = TextDataset([example[0] for example in embedded_test_vua],
                                [example[1] for example in embedded_test_vua])
@@ -233,45 +233,41 @@ def test_model(rnn_clf, nll_criterion):
 
 
 # Some more code
-def test_model_from_file(filename, nll_criterion, test_dataloader_vua, using_GPU):
+def test_model_from_file(filename, nll_criterion=nn.NLLLoss()):
     rnn_clf = torch.load(filename)
-    return test_model(rnn_clf, nll_criterion, test_dataloader_vua, using_GPU)
+    return test_model(rnn_clf, nll_criterion)
 
 
-def create_formatted_csv(filename):
-    d = {}
-    with open("../corpora/VUA_corpus/vuamc_corpus_test.csv", encoding='latin-1') as f:
-        lines = csv.reader(f)
-        next(lines)
-        for line in lines:
-            if len(line) > 0:
-                txt_idx = line[0]
-                sentence_idx = line[1]
-                sentence_txt = line[2]
-                if txt_idx not in d:
-                    d[txt_idx] = {}
-                if sentence_idx not in d[txt_idx]:
-                    d[txt_idx][sentence_idx] = {}
-                d[txt_idx][sentence_idx] = sentence_txt
+def predict_vua(model):
+    preds = {}
+    for (embed, label, txt_sent_id) in embedded_test_vua:
+        ex_data = TextDataset([embed], [label])
+        ex_dataloader = DataLoader(dataset=ex_data, batch_size=1, collate_fn=TextDataset.collate_fn)
+        pred = predict(ex_dataloader, model, using_GPU)
+        preds[txt_sent_id] = pred.item()
+    return preds
 
-    examples = [["text_idx", "sentence_idx", "verb", "sentence", "verb_idx", "label"]]
 
-    # Generating the verb column is an issue - stemming/lemmatizing doesn't give me what the authors got
-    # But it doesn't really matter since the model uses the original verb in the sentence
-    with open("../corpora/VUA_corpus/verb_tokens_test.csv", encoding='latin-1') as f:
-        lines = csv.reader(f, delimiter="_")
-        for line in lines:
-            if len(line) > 0:
-                txt_idx = line[0]
-                sentence_idx = line[1]
-                verb_idx = int(line[2]) - 1
-                sentence_txt = d[txt_idx][sentence_idx]
-                verb = sentence_txt.split()[verb_idx]  # this doesn't matter
-                label = '0'  # this doesn't matter either
-                examples.append([txt_idx, sentence_idx, verb, sentence_txt, verb_idx, label])
+def predict_vua_from_file(filename):
+    rnn_clf = torch.load(filename)
+    return predict_vua(rnn_clf)
 
-    with open(filename, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerows(examples)
 
-    return examples
+def predict_and_write_answers(filename):
+    predictions = predict_vua_from_file(filename)
+    import data_parser
+    examples = data_parser.load_vua_vtoks()
+    answers = []
+    for i in range(len(examples)):
+        if examples[i] not in predictions:
+            txt_id, sent_id, verb_id = examples[i].split("_")
+            new_txt_sent_id = '_'.join((txt_id, sent_id, verb_id))
+            while new_txt_sent_id not in predictions:
+                verb_id = str(int(verb_id) - 1)
+                new_txt_sent_id = '_'.join((txt_id, sent_id, verb_id))
+            answers.append(f"{examples[i]},{predictions[new_txt_sent_id]}\n")
+        else:
+            answers.append(f"{examples[i]},{predictions[examples[i]]}\n")
+
+    with open("answer.txt", "w") as ans:
+        ans.writelines(answers)
