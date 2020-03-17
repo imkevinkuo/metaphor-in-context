@@ -19,7 +19,7 @@ def load_raw_toefl_train():
             lines = [line.rstrip() for line in f]
             for i in range(len(lines)):
                 tok_sent = lines[i].split()
-                # need to edit this because M_ screws it up
+                # TODO: need to edit this because M_ screws it up
                 pos_tags = [(word, nltk.tag.map_tag('en-ptb', 'universal', pos_tag)) for word, pos_tag in nltk.pos_tag(tok_sent)]
                 for j in range(len(tok_sent)):
                     if pos_tags[j][1] == 'VERB':
@@ -46,7 +46,8 @@ def load_raw_toefl_test():
         lines = [line.rstrip() for line in f]
         for line in lines:
             fileid, sent_id, verb_id, verb = line.split("_")
-            sentence, verb_idx = tok_mapping[(fileid, sent_id)], int(verb_id) - 1
+            sentence = tok_mapping[(fileid, sent_id)]
+            verb_idx = int(verb_id) - 1
             if verb != sentence.split()[verb_idx]:
                 print(f"Mismatch: found {sentence[verb_idx]} instead of {verb}.")
                 print(line)
@@ -55,7 +56,7 @@ def load_raw_toefl_test():
     return raw_toefl_test, example_ids
 
 
-# For VUA
+# For main_vua at training/test time
 def load_raw_train_vua():
     raw_train_vua = []
     verb_toks = load_vua_vtoks(VUA_VERB_TOKS_TRAIN)
@@ -64,11 +65,10 @@ def load_raw_train_vua():
         txt_sent_verb_id, label = vtok
         txt_id, sent_id, verb_id = txt_sent_verb_id.split("_")
         sent_txt = sentences[(txt_id, sent_id)]
-        raw_train_vua.append([sent_txt.replace('M_', ''), int(verb_id)-1, label])
+        raw_train_vua.append([sent_txt.replace('M_', ''), int(verb_id)-1, int(label)])
     return raw_train_vua
 
 
-# I'll have to make a validation set if I use unlabeled test data
 def load_raw_test_vua():
     raw_test_vua = []
     verb_toks = load_vua_vtoks(VUA_VERB_TOKS_TEST)
@@ -78,8 +78,33 @@ def load_raw_test_vua():
         txt_id, sent_id, verb_id = txt_sent_verb_id.split("_")
         sent_txt = sentences[(txt_id, sent_id)]
         # sent_txt.replace('M_', '')
-        raw_test_vua.append([sent_txt, int(verb_id) - 1])
+        raw_test_vua.append([sent_txt, int(verb_id) - 1, txt_sent_verb_id])
     return raw_test_vua
+
+
+# For creating ELMo vectors.
+# Run write_vua_sents_to_txt() in the Python console, which generates two text files.
+# Then use allennlp to write the ELMo vectors to disk.
+# allennlp elmo train_sentences_vua.txt VUA_train.hdf5 --average --cuda-device 0
+# allennlp elmo test_sentences_vua.txt VUA_test.hdf5 --average --cuda-device 0
+def write_vua_sents_to_txt():
+    train_d = load_vua_sents(VUA_SENTENCES_TRAIN)
+    vua_train_sents = set()
+    for k in train_d:
+        sentence = train_d[k].replace('M_', '').rstrip()
+        if sentence != '':
+            vua_train_sents.add(sentence + '\n')
+    with open("train_sentences_vua.txt", 'w') as f:
+        f.writelines(vua_train_sents)
+
+    test_d = load_vua_sents(VUA_SENTENCES_TEST)
+    vua_test_sents = set()
+    for k in test_d:
+        sentence = test_d[k].replace('M_', '').rstrip()
+        if sentence != '':
+            vua_test_sents.add(test_d[k] + '\n')
+    with open("test_sentences_vua.txt", 'w') as f:
+        f.writelines(vua_test_sents)
 
 
 # ../corpora/VUA_corpus/vuamc_corpus_train.csv
@@ -121,7 +146,7 @@ def load_vua_eval_sentences():
 
 def check_formatted_vs_original():
     vua_eval_sentences = load_vua_eval_sentences()
-    vua_test_sentences = load_vua_sents("../corpora/VUA_corpus/vuamc_corpus_test.csv")
+    vua_test_sentences = load_vua_sents(VUA_SENTENCES_TEST)
 
     for txt_sent_id in vua_eval_sentences:
         sentence = vua_eval_sentences[txt_sent_id]

@@ -24,6 +24,10 @@ print("GPU Detected:")
 print(torch.cuda.is_available())
 using_GPU = True
 
+# These affect embedding behavior
+torch.random.manual_seed(0)
+torch.cuda.manual_seed_all(0)
+
 """
 1. Data pre-processing
 """
@@ -166,18 +170,11 @@ def train_model():
                                                                                        nll_criterion, using_GPU)
                 val_loss.append(avg_eval_loss)
                 val_f1.append(f1)
-                # print(
-                #     "Iteration {}. Validation Loss {}. Accuracy {}. Precision {}. Recall {}. F1 {}. class-wise F1 {}.".format(
-                #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
-                # filename = f'../models/classification/VUA_iter_{str(num_iter)}.pt'
-                # torch.save(rnn_clf, filename)
-                # avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(train_dataloader_vua, rnn_clf,
-                #                                                                        nll_criterion, using_GPU)
-                # training_loss.append(avg_eval_loss)
-                # training_f1.append(f1)
-                # print(
-                #     "Iteration {}. Training Loss {}. Training Accuracy {}. Training Precision {}. Training Recall {}. Training F1 {}. Training class-wise F1 {}.".format(
-                #         num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
+                print(
+                    "Iteration {}. Validation Loss {}. Accuracy {}. Precision {}. Recall {}. F1 {}. class-wise F1 {}.".format(
+                        num_iter, avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1))
+                filename = f'../models/classification/VUA_iter_{str(num_iter)}.pt'
+                torch.save(rnn_clf.state_dict(), filename)
     # print("Training done!")
     return rnn_clf, nll_criterion
 
@@ -232,42 +229,41 @@ def test_model(rnn_clf, nll_criterion):
     return precision, recall, f1, eval_accuracy.item(), fus_f1
 
 
-# Some more code
-def test_model_from_file(filename, nll_criterion=nn.NLLLoss()):
-    rnn_clf = torch.load(filename)
-    return test_model(rnn_clf, nll_criterion)
-
-
-def predict_vua(model):
+def predict_vua(rnn_clf):
     preds = {}
     for (embed, label, txt_sent_id) in embedded_test_vua:
         ex_data = TextDataset([embed], [label])
         ex_dataloader = DataLoader(dataset=ex_data, batch_size=1, collate_fn=TextDataset.collate_fn)
-        pred = predict(ex_dataloader, model, using_GPU)
+        pred = predict(ex_dataloader, rnn_clf, using_GPU)
         preds[txt_sent_id] = pred.item()
     return preds
 
 
-def predict_vua_from_file(filename):
-    rnn_clf = torch.load(filename)
-    return predict_vua(rnn_clf)
-
-
-def predict_and_write_answers(filename):
-    predictions = predict_vua_from_file(filename)
+def write_predictions_to_answer_file(predictions):
     import data_parser
-    examples = data_parser.load_vua_vtoks()
+    vtoks = data_parser.load_vua_vtoks(data_parser.VUA_VERB_TOKS_TEST)
     answers = []
-    for i in range(len(examples)):
-        if examples[i] not in predictions:
-            txt_id, sent_id, verb_id = examples[i].split("_")
+    for i in range(len(vtoks)):
+        vtok = vtoks[i][0]
+        if vtok not in predictions:
+            txt_id, sent_id, verb_id = vtok.split("_")
             new_txt_sent_id = '_'.join((txt_id, sent_id, verb_id))
             while new_txt_sent_id not in predictions:
                 verb_id = str(int(verb_id) - 1)
                 new_txt_sent_id = '_'.join((txt_id, sent_id, verb_id))
-            answers.append(f"{examples[i]},{predictions[new_txt_sent_id]}\n")
+            answers.append(f"{vtok},{predictions[new_txt_sent_id]}\n")
         else:
-            answers.append(f"{examples[i]},{predictions[examples[i]]}\n")
+            answers.append(f"{vtok},{predictions[vtok]}\n")
 
     with open("answer.txt", "w") as ans:
         ans.writelines(answers)
+
+
+# ../models/classification/VUA_iter_4000.pt
+def load_model(filename):
+    rnn_clf = RNNSequenceClassifier(num_classes=2, embedding_dim=300 + 1024 + 50, hidden_size=300, num_layers=1,
+                                    bidir=True,
+                                    dropout1=0.3, dropout2=0.2, dropout3=0.2)
+    rnn_clf.load_state_dict(torch.load(filename))
+    rnn_clf.cuda()
+    return rnn_clf
