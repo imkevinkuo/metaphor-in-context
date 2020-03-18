@@ -1,7 +1,9 @@
 import csv
 import os
 import nltk
-TOEFL_TRAIN = "../corpora/toefl_sharedtask_dataset/essays"
+from jsonlines import jsonlines
+
+TOEFL_TRAIN = "../corpora/toefl_sharedtask_dataset"
 TOEFL_TEST = "../corpora/toefl_sharedtask_evaluation_kit"
 VUA_VERB_TOKS_TRAIN = "../corpora/VUA_corpus/verb_tokens.csv"
 VUA_SENTENCES_TRAIN = "../corpora/VUA_corpus/vuamc_corpus_train.csv"
@@ -11,49 +13,84 @@ VUA_SENTENCES_TEST = "../corpora/VUA_corpus/vuamc_corpus_test.csv"
 
 # We may need to run some kind of spellcheck / autocorrect on this text...
 def load_raw_toefl_train():
+    pos_and_label = {}
+    with jsonlines.open(f'{TOEFL_TRAIN}/toefl_skll_train_features/all_pos/P.jsonlines') as reader:
+        for obj in reader:
+            txt_id, sent_id, word_id, word = obj['id'].split("_")
+            pos_tag = obj['x']['stanford_postag']
+            label = obj['y']
+            pos_and_label[(txt_id, int(sent_id), int(word_id))] = (pos_tag, label)
+
+    toefl_train_sents = {}  # (essay, sentence_id) mapping to sentence
     raw_toefl_train = []
-    example_ids = []
-    for filename in os.listdir(TOEFL_TRAIN):
+
+    for filename in os.listdir(f'{TOEFL_TRAIN}/essays'):
         fileid = filename.split('.')[0]
-        with open(f"{TOEFL_TRAIN}/{filename}") as f:
+        with open(f'{TOEFL_TRAIN}/essays/{filename}') as f:
             lines = [line.rstrip() for line in f]
             for i in range(len(lines)):
                 tok_sent = lines[i].split()
-                # TODO: need to edit this because M_ screws it up
-                pos_tags = [(word, nltk.tag.map_tag('en-ptb', 'universal', pos_tag)) for word, pos_tag in nltk.pos_tag(tok_sent)]
+                sentence = lines[i].replace('M_', '')
+                toefl_train_sents[(fileid, i + 1)] = sentence
                 for j in range(len(tok_sent)):
-                    if pos_tags[j][1] == 'VERB':
-                        label = 0
-                        if tok_sent[j].startswith("M_"):
-                            label = 1
-                        raw_toefl_train.append([lines[i], j, label])  # sentence, verb_idx, label
-                        example_ids.append("_".join((fileid, str(i+1), str(j+1))))
-    return raw_toefl_train, example_ids
+                    if (fileid, i+1, j+1) in pos_and_label:
+                        pos_tag, label = pos_and_label[(fileid, i+1, j+1)]
+                        if pos_tag.startswith('V'):
+                            raw_toefl_train.append([sentence, j, int(label)])  # sentence, verb_idx, label
+    return raw_toefl_train, toefl_train_sents
 
 
 def load_raw_toefl_test():
-    tok_mapping = {}
-    example_ids = []
-    for filename in os.listdir(f"{TOEFL_TEST}/essays"):
+    pos_tags = {}
+    with jsonlines.open(f'{TOEFL_TEST}/toefl_skll_test_features_no_labels/all_pos/P.jsonlines') as reader:
+        for obj in reader:
+            txt_id, sent_id, word_id, word = obj['id'].split("_")
+            pos_tag = obj['x']['stanford_postag']
+            pos_tags[(txt_id, int(sent_id), int(word_id))] = pos_tag
+
+    toefl_test_sents = {}  # (essay, sentence_id) mapping to sentence
+    raw_toefl_test = []
+
+    for filename in os.listdir(f'{TOEFL_TEST}/essays'):
         fileid = filename.split('.')[0]
-        with open(f"{TOEFL_TEST}/essays/{filename}") as f:
+        with open(f'{TOEFL_TEST}/essays/{filename}') as f:
             lines = [line.rstrip() for line in f]
             for i in range(len(lines)):
-                tok_mapping[(fileid, str(i+1))] = lines[i]
+                tok_sent = lines[i].split()
+                sentence = lines[i]
+                toefl_test_sents[(fileid, i + 1)] = sentence
+                for j in range(len(tok_sent)):
+                    if (fileid, i+1, j+1) in pos_tags:
+                        pos_tag = pos_tags[(fileid, i+1, j+1)]
+                        if pos_tag.startswith('V'):
+                            raw_toefl_test.append([sentence, j])  # sentence, verb_idx, label
+    return raw_toefl_test, toefl_test_sents
 
-    raw_toefl_test = []
-    with open(f"{TOEFL_TEST}/toefl_verb_test_tokens.csv") as f:
-        lines = [line.rstrip() for line in f]
-        for line in lines:
-            fileid, sent_id, verb_id, verb = line.split("_")
-            sentence = tok_mapping[(fileid, sent_id)]
-            verb_idx = int(verb_id) - 1
-            if verb != sentence.split()[verb_idx]:
-                print(f"Mismatch: found {sentence[verb_idx]} instead of {verb}.")
-                print(line)
-            raw_toefl_test.append([sentence, verb_idx])
-            example_ids.append("_".join((fileid, sent_id, verb_id)))
-    return raw_toefl_test, example_ids
+
+# For creating ELMo vectors.
+# Run write_toefl_sents_to_txt() in the Python console, which generates two text files.
+# Open elmo folder in terminal and use allennlp to write the ELMo vectors to disk.
+# allennlp elmo train_sentences_toefl.txt TOEFL_train.hdf5 --average --cuda-device 0
+# allennlp elmo test_sentences_toefl.txt TOEFL_test.hdf5 --average --cuda-device 0
+def write_toefl_sents_to_txt():
+    raw_toefl_train, toefl_train_sents = load_raw_toefl_train()
+    raw_toefl_test, toefl_test_sents = load_raw_toefl_test()
+
+    train_sentence_list = []
+    for k in toefl_train_sents:
+        sentence = toefl_train_sents[k]
+        if sentence != '':
+            train_sentence_list.append(sentence + '\n')
+    with open("../elmo/train_sentences_toefl.txt", 'w') as f:
+        f.writelines(train_sentence_list)
+
+    test_sentence_list = []
+    for k in toefl_test_sents:
+        sentence = toefl_test_sents[k]
+        if sentence != '':
+            test_sentence_list.append(sentence + '\n')
+    with open("../elmo/test_sentences_toefl.txt", 'w') as f:
+        f.writelines(test_sentence_list)
 
 
 # For main_vua at training/test time
@@ -84,9 +121,9 @@ def load_raw_test_vua():
 
 # For creating ELMo vectors.
 # Run write_vua_sents_to_txt() in the Python console, which generates two text files.
-# Then use allennlp to write the ELMo vectors to disk.
-# allennlp elmo train_sentences_vua.txt VUA_train.hdf5 --average --cuda-device 0
-# allennlp elmo test_sentences_vua.txt VUA_test.hdf5 --average --cuda-device 0
+# Open elmo folder in terminal and use allennlp to write the ELMo vectors to disk.
+# allennlp elmo train_sentences_vua.txt VUA_train2.hdf5 --average --cuda-device 0
+# allennlp elmo test_sentences_vua.txt VUA_test2.hdf5 --average --cuda-device 0
 def write_vua_sents_to_txt():
     train_d = load_vua_sents(VUA_SENTENCES_TRAIN)
     vua_train_sents = set()
@@ -94,7 +131,7 @@ def write_vua_sents_to_txt():
         sentence = train_d[k].replace('M_', '').rstrip()
         if sentence != '':
             vua_train_sents.add(sentence + '\n')
-    with open("train_sentences_vua.txt", 'w') as f:
+    with open("../elmo/train_sentences_vua.txt", 'w') as f:
         f.writelines(vua_train_sents)
 
     test_d = load_vua_sents(VUA_SENTENCES_TEST)
@@ -103,7 +140,7 @@ def write_vua_sents_to_txt():
         sentence = test_d[k].replace('M_', '').rstrip()
         if sentence != '':
             vua_test_sents.add(test_d[k] + '\n')
-    with open("test_sentences_vua.txt", 'w') as f:
+    with open("../elmo/test_sentences_vua.txt", 'w') as f:
         f.writelines(vua_test_sents)
 
 

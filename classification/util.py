@@ -105,7 +105,7 @@ def get_word2idx_idx2word(vocab):
     return word2idx, idx2word
 
 
-def embed_sequence(sequence, verb_idx, word2idx, glove_embeddings, elmo_embeddings, suffix_embeddings):
+def embed_sequence(sequence, verb_idx, word2idx, glove_embeddings, elmo_embeddings, suffix_embeddings, sequence_idx=None):
     """
     Assume that word2idx has 1 mapped to UNK
     Assume that word2idx maps well implicitly with glove_embeddings
@@ -129,8 +129,11 @@ def embed_sequence(sequence, verb_idx, word2idx, glove_embeddings, elmo_embeddin
     glove_part = glove_embeddings(Variable(torch.LongTensor(indexed_sequence)))
 
     # 2. embed the sequence by elmo vectors
-    if elmo_embeddings != None:
-        elmo_part = elmo_embeddings[sequence]
+    if elmo_embeddings is not None:
+        if sequence_idx is not None:
+            elmo_part = elmo_embeddings[sequence_idx]
+        else:
+            elmo_part = elmo_embeddings[sequence]
         assert (elmo_part.shape == (len(words), 1024))
 
     # 3. embed the sequence by suffix indicators i.e. wether it is a verb or not
