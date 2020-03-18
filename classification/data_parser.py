@@ -12,7 +12,7 @@ VUA_SENTENCES_TEST = "../corpora/VUA_corpus/vuamc_corpus_test.csv"
 
 
 # We may need to run some kind of spellcheck / autocorrect on this text...
-def load_raw_toefl_train():
+def load_raw_train_toefl():
     pos_and_label = {}
     with jsonlines.open(f'{TOEFL_TRAIN}/toefl_skll_train_features/all_pos/P.jsonlines') as reader:
         for obj in reader:
@@ -22,7 +22,7 @@ def load_raw_toefl_train():
             pos_and_label[(txt_id, int(sent_id), int(word_id))] = (pos_tag, label)
 
     toefl_train_sents = {}  # (essay, sentence_id) mapping to sentence
-    raw_toefl_train = []
+    raw_train_toefl = []
 
     for filename in os.listdir(f'{TOEFL_TRAIN}/essays'):
         fileid = filename.split('.')[0]
@@ -36,11 +36,11 @@ def load_raw_toefl_train():
                     if (fileid, i+1, j+1) in pos_and_label:
                         pos_tag, label = pos_and_label[(fileid, i+1, j+1)]
                         if pos_tag.startswith('V'):
-                            raw_toefl_train.append([sentence, j, int(label)])  # sentence, verb_idx, label
-    return raw_toefl_train, toefl_train_sents
+                            raw_train_toefl.append([sentence, j, int(label)])  # sentence, verb_idx, label
+    return raw_train_toefl, toefl_train_sents
 
 
-def load_raw_toefl_test():
+def load_raw_test_toefl():
     pos_tags = {}
     with jsonlines.open(f'{TOEFL_TEST}/toefl_skll_test_features_no_labels/all_pos/P.jsonlines') as reader:
         for obj in reader:
@@ -49,7 +49,7 @@ def load_raw_toefl_test():
             pos_tags[(txt_id, int(sent_id), int(word_id))] = pos_tag
 
     toefl_test_sents = {}  # (essay, sentence_id) mapping to sentence
-    raw_toefl_test = []
+    raw_test_toefl = []
 
     for filename in os.listdir(f'{TOEFL_TEST}/essays'):
         fileid = filename.split('.')[0]
@@ -63,8 +63,18 @@ def load_raw_toefl_test():
                     if (fileid, i+1, j+1) in pos_tags:
                         pos_tag = pos_tags[(fileid, i+1, j+1)]
                         if pos_tag.startswith('V'):
-                            raw_toefl_test.append([sentence, j])  # sentence, verb_idx, label
-    return raw_toefl_test, toefl_test_sents
+                            raw_test_toefl.append([sentence, j, f'{fileid}_{i+1}_{j+1}'])  # sentence, verb_idx, key
+    return raw_test_toefl, toefl_test_sents
+
+
+def load_toefl_vtoks():
+    vtoks = []
+    with open(f"{TOEFL_TEST}/toefl_verb_test_tokens.csv") as f:
+        lines = [line.rstrip() for line in f]
+        for line in lines:
+            txt_id, sent_id, verb_id, verb = line.split("_")
+            vtoks.append("_".join((txt_id, sent_id, verb_id)))
+    return vtoks
 
 
 # For creating ELMo vectors.
@@ -73,8 +83,8 @@ def load_raw_toefl_test():
 # allennlp elmo train_sentences_toefl.txt TOEFL_train.hdf5 --average --cuda-device 0
 # allennlp elmo test_sentences_toefl.txt TOEFL_test.hdf5 --average --cuda-device 0
 def write_toefl_sents_to_txt():
-    raw_toefl_train, toefl_train_sents = load_raw_toefl_train()
-    raw_toefl_test, toefl_test_sents = load_raw_toefl_test()
+    raw_toefl_train, toefl_train_sents = load_raw_train_toefl()
+    raw_toefl_test, toefl_test_sents = load_raw_test_toefl()
 
     train_sentence_list = []
     for k in toefl_train_sents:
