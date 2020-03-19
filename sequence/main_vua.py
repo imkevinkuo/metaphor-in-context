@@ -235,6 +235,40 @@ def train_model():
     return RNNseq_model, loss_criterion
 
 
+raw_test_vua = []
+with open('../data/VUAsequence/VUA_seq_formatted_test.csv', encoding='latin-1') as f:
+    lines = csv.reader(f)
+    next(lines)
+    for line in lines:
+        # txt_id	sen_ix	sentence	label_seq	pos_seq	labeled_sentence	genre
+        pos_seq = ast.literal_eval(line[4])
+        label_seq = ast.literal_eval(line[3])
+        assert(len(pos_seq) == len(label_seq))
+        assert(len(line[2].split()) == len(pos_seq))
+        raw_test_vua.append([line[2], label_seq, pos_seq])
+# print('number of examples(sentences) for test_set ', len(raw_test_vua))
+
+for i in range(len(raw_test_vua)):
+    raw_test_vua[i][2] = index_sequence(pos2idx, raw_test_vua[i][2])
+
+elmos_test_vua = h5py.File('../elmo/VUA_test.hdf5', 'r')
+# raw_train_vua: sentence, label_seq, pos_seq
+# embedded_train_vua: embedded_sentence, pos, labels
+embedded_test_vua = [[embed_indexed_sequence(example[0], example[2], word2idx,
+                                      glove_embeddings, elmos_test_vua, suffix_embeddings),
+                       example[2], example[1]]
+                      for example in raw_test_vua]
+
+# Separate the input (embedded_sequence) and labels in the indexed train sets.
+# embedded_train_vua: embedded_sentence, pos, labels
+test_dataset_vua = TextDataset([example[0] for example in embedded_test_vua],
+                              [example[1] for example in embedded_test_vua],
+                              [example[2] for example in embedded_test_vua])
+
+# Set up a DataLoader for the test dataset
+test_dataloader_vua = DataLoader(dataset=test_dataset_vua, batch_size=batch_size,
+                              collate_fn=TextDataset.collate_fn)
+
 # """
 # 3.3
 # plot the training process: losses for validation and training dataset
@@ -271,42 +305,6 @@ def test_model(RNNseq_model, loss_criterion):
     """
     test on genres by POS tags
     """
-    # print("**********************************************************")
-    # print("Evalutation on test set: ")
-
-    raw_test_vua = []
-    with open('../data/VUAsequence/VUA_seq_formatted_test.csv', encoding='latin-1') as f:
-        lines = csv.reader(f)
-        next(lines)
-        for line in lines:
-            # txt_id	sen_ix	sentence	label_seq	pos_seq	labeled_sentence	genre
-            pos_seq = ast.literal_eval(line[4])
-            label_seq = ast.literal_eval(line[3])
-            assert(len(pos_seq) == len(label_seq))
-            assert(len(line[2].split()) == len(pos_seq))
-            raw_test_vua.append([line[2], label_seq, pos_seq])
-    # print('number of examples(sentences) for test_set ', len(raw_test_vua))
-
-    for i in range(len(raw_test_vua)):
-        raw_test_vua[i][2] = index_sequence(pos2idx, raw_test_vua[i][2])
-
-    elmos_test_vua = h5py.File('../elmo/VUA_test.hdf5', 'r')
-    # raw_train_vua: sentence, label_seq, pos_seq
-    # embedded_train_vua: embedded_sentence, pos, labels
-    embedded_test_vua = [[embed_indexed_sequence(example[0], example[2], word2idx,
-                                          glove_embeddings, elmos_test_vua, suffix_embeddings),
-                           example[2], example[1]]
-                          for example in raw_test_vua]
-
-    # Separate the input (embedded_sequence) and labels in the indexed train sets.
-    # embedded_train_vua: embedded_sentence, pos, labels
-    test_dataset_vua = TextDataset([example[0] for example in embedded_test_vua],
-                                  [example[1] for example in embedded_test_vua],
-                                  [example[2] for example in embedded_test_vua])
-
-    # Set up a DataLoader for the test dataset
-    test_dataloader_vua = DataLoader(dataset=test_dataset_vua, batch_size=batch_size,
-                                  collate_fn=TextDataset.collate_fn)
 
     # print("Tagging model performance on VUA test set by POS tags: regardless of genres")
     avg_eval_loss, performance_matrix = evaluate(idx2pos, test_dataloader_vua, RNNseq_model, loss_criterion, using_GPU)

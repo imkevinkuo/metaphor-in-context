@@ -138,7 +138,7 @@ def get_word2idx_idx2word(vocab):
 
 
 def embed_indexed_sequence(sentence, pos_seq, word2idx, glove_embeddings, elmo_embeddings,
-                           pos_embeddings=None):
+                           pos_embeddings=None, sequence_idx=None):
     """
     Assume that pos_seq maps well with sentence
     Assume that the given sentence is indexed by word2idx
@@ -168,7 +168,10 @@ def embed_indexed_sequence(sentence, pos_seq, word2idx, glove_embeddings, elmo_e
 
     # 2. embed the sequence by elmo vectors
     if elmo_embeddings is not None:
-        elmo_part = elmo_embeddings[sentence]
+        if sequence_idx is not None:
+            elmo_part = elmo_embeddings[sequence_idx]
+        else:
+            elmo_part = elmo_embeddings[sentence]
         assert (elmo_part.shape == (len(words), 1024))
 
     # 3. embed the sequence by pos indicators i.e. whether it is a verb or not
@@ -189,6 +192,7 @@ def embed_indexed_sequence(sentence, pos_seq, word2idx, glove_embeddings, elmo_e
         result = np.concatenate((glove_part.data, elmo_part), axis=1)
 
     assert (len(words) == result.shape[0])
+    assert (len(pos_seq) == result.shape[0])
     return result
 
 
@@ -235,7 +239,31 @@ def evaluate(idx2pos, evaluation_dataloader, model, criterion, using_GPU):
 
     # Set the model back to train mode, which activates dropout again.
     model.train()
-    return average_eval_loss.item(), print_info(confusion_matrix, idx2pos)
+    return average_eval_loss.item(), print_info_all(confusion_matrix, idx2pos)
+
+
+def predict(evaluation_dataloader, model, using_GPU):
+    # Set model to eval mode, which turns off dropout.
+    model.eval()
+
+    preds = []
+    for (eval_pos_seqs, eval_text, eval_lengths, eval_labels) in evaluation_dataloader:
+        eval_text = Variable(eval_text, volatile=True)
+        eval_lengths = Variable(eval_lengths, volatile=True)
+        eval_labels = Variable(eval_labels, volatile=True)
+        if using_GPU:
+            eval_text = eval_text.cuda()
+            eval_lengths = eval_lengths.cuda()
+            eval_labels = eval_labels.cuda()
+
+        # predicted shape: (batch_size, seq_len, 2)
+        predicted = model(eval_text, eval_lengths)
+        _, predicted_labels = torch.max(predicted.data, 2)
+        preds.append(predicted_labels)
+
+    # Set the model back to train mode, which activates dropout again.
+    model.train()
+    return preds
 
 
 def update_confusion_matrix(matrix, predictions, labels, pos_seqs):
@@ -349,6 +377,24 @@ def print_info(matrix, idx2pos):
         accuracy = 100 * (grid[1, 1] + grid[0, 0]) / np.sum(grid)
         # print('PRFA performance for ', pos_tag, precision, recall, f1, accuracy)
         result.append([precision, recall, f1, accuracy])
+    return np.array(result)
+
+
+def print_info_all(matrix, idx2pos):
+    result = []
+    TP, TN, FP, FN = 0, 0, 0, 0
+    for idx in range(len(idx2pos)):
+        pos_tag = idx2pos[idx]
+        grid = matrix[idx]
+        TP += grid[1, 1]
+        TN += grid[0, 0]
+        FP += grid[1, 0]
+        FN += grid[0, 1]
+    precision = 100 * TP / (TP + FP)
+    recall = 100 * TP / (TP + FN)
+    f1 = 2 * precision * recall / (precision + recall)
+    accuracy = 100 * (TP + TN) / (TP + TN + FP + FN)
+    result.append([precision, recall, f1, accuracy])
     return np.array(result)
 
 
@@ -561,6 +607,7 @@ class TextDatasetWithGloveElmoSuffix(Dataset):
         example_label_seq = self.labels[idx]
         # Truncate the sequence if necessary
         example_length = example_text.shape[0]
+        # print(idx, example_text.shape, len(example_pos_seq))
         assert (example_length == len(example_pos_seq))
         assert (example_length == len(example_label_seq))
         return example_pos_seq, example_text, example_length, example_label_seq
