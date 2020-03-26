@@ -1,16 +1,22 @@
 from tqdm import tqdm
-import torch
 import numpy as np
 import mmap
 import ast
 import csv
-from torch.utils.data import Dataset
+import torch
 import torch.nn as nn
+from torch import optim
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 from torch.autograd import Variable
 
+import data_parser
+from model import RNNSequenceModel
 
 # Misc helper functions
 # Get the number of lines from a filepath
+
+
 def get_num_lines(file_path):
     fp = open(file_path, "r+")
     buf = mmap.mmap(fp.fileno(), 0)
@@ -240,30 +246,6 @@ def evaluate(idx2pos, evaluation_dataloader, model, criterion, using_GPU):
     # Set the model back to train mode, which activates dropout again.
     model.train()
     return average_eval_loss.item(), print_info_all(confusion_matrix, idx2pos)
-
-
-def predict(evaluation_dataloader, model, using_GPU):
-    # Set model to eval mode, which turns off dropout.
-    model.eval()
-
-    preds = []
-    for (eval_pos_seqs, eval_text, eval_lengths, eval_labels) in evaluation_dataloader:
-        eval_text = Variable(eval_text, volatile=True)
-        eval_lengths = Variable(eval_lengths, volatile=True)
-        eval_labels = Variable(eval_labels, volatile=True)
-        if using_GPU:
-            eval_text = eval_text.cuda()
-            eval_lengths = eval_lengths.cuda()
-            eval_labels = eval_labels.cuda()
-
-        # predicted shape: (batch_size, seq_len, 2)
-        predicted = model(eval_text, eval_lengths)
-        _, predicted_labels = torch.max(predicted.data, 2)
-        preds.append(predicted_labels)
-
-    # Set the model back to train mode, which activates dropout again.
-    model.train()
-    return preds
 
 
 def update_confusion_matrix(matrix, predictions, labels, pos_seqs):
@@ -565,7 +547,7 @@ def get_performance_VUA_test():
 
 
 # Make sure to subclass torch.utils.data.Dataset
-class TextDatasetWithGloveElmoSuffix(Dataset):
+class TextDataset(Dataset):
     def __init__(self, embedded_text, pos_seqs, labels):
         """
 
@@ -681,3 +663,156 @@ class TextDatasetWithGloveElmoSuffix(Dataset):
                 torch.stack(batch_padded_example_text),
                 torch.LongTensor(batch_lengths),
                 torch.LongTensor(batch_padded_labels))
+
+
+"""
+Moved from main
+"""
+
+
+def train_model(train_dataloader, val_dataloader, fold_num, idx2pos, using_GPU):
+    optimal_f1s = []
+    optimal_ps = []
+    optimal_rs = []
+    optimal_accs = []
+    predictions_all = []
+
+    RNNseq_model = RNNSequenceModel(num_classes=2, embedding_dim=300 + 1024, hidden_size=300, num_layers=1, bidir=True,
+                                    dropout1=0.5, dropout2=0, dropout3=0.1)
+    # Move the model to the GPU if available
+    if using_GPU:
+        RNNseq_model = RNNseq_model.cuda()
+    # Set up criterion for calculating loss
+    loss_criterion = nn.NLLLoss()
+    # Set up an optimizer for updating the parameters of the rnn_clf
+    rnn_optimizer = optim.Adam(RNNseq_model.parameters(), lr=0.005)
+    # Number of epochs (passes through the dataset) to train the model for.
+    num_epochs = 20
+
+    '''
+    3. 2
+    train model
+    '''
+    train_loss = []
+    val_loss = []
+    performance_matrix = None
+    val_f1s = []
+    train_f1s = []
+    # A counter for the number of gradient updates
+    num_iter = 0
+    comparable = []
+    for epoch in range(num_epochs):
+        # print("Starting epoch {}".format(epoch + 1))
+        for (_, example_text, example_lengths, example_labels) in train_dataloader:
+            example_text = Variable(example_text)
+            example_lengths = Variable(example_lengths)
+            example_labels = Variable(example_labels)
+            if using_GPU:
+                example_text = example_text.cuda()
+                example_lengths = example_lengths.cuda()
+                example_labels = example_labels.cuda()
+            # predicted shape: (batch_size, seq_len, 2)
+            predicted = RNNseq_model(example_text, example_lengths)
+            #
+            # _, predicted_labels = torch.max(predicted.data, 2)
+            # print("# pred M:", torch.sum(predicted_labels), "# actual M:", torch.sum(example_labels))
+            #
+            batch_loss = loss_criterion(predicted.view(-1, 2), example_labels.view(-1))
+            rnn_optimizer.zero_grad()
+            batch_loss.backward()
+            rnn_optimizer.step()
+            num_iter += 1
+            # Calculate validation and training set loss and accuracy every 200 gradient updates
+            if num_iter % 100 == 0:
+                avg_eval_loss, performance_matrix = evaluate(idx2pos, val_dataloader, RNNseq_model, loss_criterion, using_GPU)
+                val_loss.append(avg_eval_loss)
+                val_f1s.append(performance_matrix[:, 2])
+                print("Iteration {}. Validation Loss {}. {}".format(num_iter, avg_eval_loss, performance_matrix))
+                filename = f"../models/sequence/TOEFL_fold_{fold_num}_iter_{num_iter}.pt"
+                torch.save(RNNseq_model.state_dict(), filename)
+                # avg_eval_loss, performance_matrix = evaluate(idx2pos, train_dataloader_vua, RNNseq_model,
+                #                                              loss_criterion, using_GPU)
+    #             train_loss.append(avg_eval_loss)
+    #             train_f1s.append(performance_matrix[:, 2])
+    #             print("Iteration {}. Training Loss {}.".format(num_iter, avg_eval_loss))
+
+    return RNNseq_model
+
+
+def train_k_fold(k, sentences, pos_seqs, label_seqs, idx2pos, using_GPU):
+    clfs = []
+    fold_size = int(len(sentences) / k)
+
+    for i in range(k):
+        # Separate the input (embedded_sequence) and labels in the indexed train sets.
+        # raw_train: sentence, label_seq, pos_seq
+        # embedded_train: embedded_sentence, pos, labels
+        val_indices = [z for z in range(i * fold_size, (i + 1) * fold_size)]
+        embedded_train = [[sentences[j], pos_seqs[j], label_seqs[j]] for j in range(len(sentences)) if j not in val_indices]
+        embedded_val = [[sentences[j], pos_seqs[j], label_seqs[j]] for j in range(len(sentences)) if j in val_indices]
+        print("Metaphorical word count:", sum([sum(ex[2]) for ex in embedded_train]))
+        '''
+        2. 3
+        set up Dataloader for batching
+        '''
+        train_dataset = TextDataset([example[0] for example in embedded_train],
+                                        [example[1] for example in embedded_train],
+                                        [example[2] for example in embedded_train])
+        val_dataset = TextDataset([example[0] for example in embedded_val],
+                                      [example[1] for example in embedded_val],
+                                      [example[2] for example in embedded_val])
+
+        # Data-related hyperparameters
+        batch_size = 16
+        # Set up a DataLoader for the training and validation sets
+        train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True,
+                                          collate_fn=TextDataset.collate_fn)
+        val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size,
+                                        collate_fn=TextDataset.collate_fn)
+        clf, crit = train_model(train_dataloader, val_dataloader, i, idx2pos, using_GPU)
+        clfs.append(clf)
+    return clfs
+
+
+def predict(RNNseq_model, embedded_dataset, using_GPU):
+    RNNseq_model.eval()
+
+    preds = {}
+    for (embed, pos_seq, txt_sent_id) in embedded_dataset:
+        embed_var = Variable(torch.Tensor([embed]))
+        embed_len = Variable(torch.Tensor([embed.shape[0]]))
+        if using_GPU:
+            embed_var = embed_var.cuda()
+            embed_len = embed_len.cuda()
+        pred = RNNseq_model(embed_var, embed_len)
+        preds[txt_sent_id] = pred[0][0]
+
+    RNNseq_model.train()
+    return preds
+
+
+def write_preds_to_answers(preds):
+    ptoks = data_parser.load_toefl_ptoks()
+    answers = []
+    for ptok in ptoks:
+        txt_id, sent_id, word_id = ptok.split("_")
+        prediction = preds[(txt_id, int(sent_id))][int(word_id)-1]
+        answers.append(f"{ptok},{prediction}\n")
+
+    with open("answer.txt", "w") as ans:
+        ans.writelines(answers)
+
+
+def load_model(filename, using_GPU):
+    RNNseq_model = RNNSequenceModel(num_classes=2, embedding_dim=300 + 1024, hidden_size=300, num_layers=1, bidir=True,
+                                    dropout1=0.5, dropout2=0, dropout3=0.1)
+    RNNseq_model.load_state_dict(torch.load(filename))
+    if using_GPU:
+        RNNseq_model.cuda()
+    return RNNseq_model
+
+
+def pred_and_write(filename, embedded_dataset, using_GPU):
+    clf = load_model(filename)
+    preds = predict(clf, embedded_dataset, using_GPU)
+    write_preds_to_answers(preds)

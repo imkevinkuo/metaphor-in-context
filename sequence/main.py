@@ -1,6 +1,6 @@
 from util import get_num_lines, get_pos2idx_idx2pos, index_sequence, get_vocab, embed_indexed_sequence, \
     get_word2idx_idx2word, get_embedding_matrix, write_predictions, get_performance_VUAverb_val
-from util import TextDatasetWithGloveElmoSuffix as TextDataset
+from util import TextDataset as TextDataset
 from util import evaluate
 from model import RNNSequenceModel
 

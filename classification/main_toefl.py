@@ -78,27 +78,6 @@ sentences = [embed_sequence(example[0], example[1], word2idx, glove_embeddings, 
 labels = [example[2] for example in raw_train_toefl]
 
 assert(len(sentences) == len(labels))
-'''
-2. 3
-set up Dataloader for batching
-'''
-# 10 folds takes up too much RAM, just do 1
-fold_size = int(len(raw_train_toefl) / 10)
-embedded_train_toefl = [[sentences[i], labels[i]] for i in range(fold_size, len(sentences))]
-embedded_val_toefl = [[sentences[i], labels[i]] for i in range(fold_size)]
-
-train_dataset_toefl = TextDataset([example[0] for example in embedded_train_toefl],
-                                  [example[1] for example in embedded_train_toefl])
-val_dataset_toefl = TextDataset([example[0] for example in embedded_val_toefl],
-                                [example[1] for example in embedded_val_toefl])
-
-# Data-related hyperparameters
-batch_size = 64
-# Set up a DataLoader for the training, validation, and test dataset
-train_dataloader_toefl = DataLoader(dataset=train_dataset_toefl, batch_size=batch_size, shuffle=True,
-                                    collate_fn=TextDataset.collate_fn)
-val_dataloader_toefl = DataLoader(dataset=val_dataset_toefl, batch_size=batch_size,
-                                  collate_fn=TextDataset.collate_fn)
 
 # Test set
 elmos_test_toefl = h5py.File('../elmo/TOEFL_test.hdf5', 'r')
@@ -108,7 +87,34 @@ embedded_test_toefl = [[embed_sequence(example[0], example[1], word2idx, glove_e
                        for example in raw_test_toefl]
 
 
-def train_model():
+def train_k_fold(k):
+    '''
+    2. 3
+    set up Dataloader for batching
+    '''
+    fold_size = int(len(raw_train_toefl) / 10)
+    for i in range(k):
+        val_indices = [z for z in range(i * fold_size, (i + 1) * fold_size)]
+        embedded_train_toefl = [[sentences[j], labels[j]] for j in range(len(sentences)) if j not in val_indices]
+        embedded_val_toefl = [[sentences[j], labels[j]] for j in range(len(sentences)) if j in val_indices]
+
+        train_dataset_toefl = TextDataset([example[0] for example in embedded_train_toefl],
+                                          [example[1] for example in embedded_train_toefl])
+        val_dataset_toefl = TextDataset([example[0] for example in embedded_val_toefl],
+                                        [example[1] for example in embedded_val_toefl])
+
+        # Data-related hyperparameters
+        batch_size = 64
+        # Set up a DataLoader for the training, validation, and test dataset
+        train_dataloader_toefl = DataLoader(dataset=train_dataset_toefl, batch_size=batch_size, shuffle=True,
+                                            collate_fn=TextDataset.collate_fn)
+        val_dataloader_toefl = DataLoader(dataset=val_dataset_toefl, batch_size=batch_size,
+                                          collate_fn=TextDataset.collate_fn)
+
+        clf, crit = train_model(train_dataloader_toefl, val_dataloader_toefl, i)
+
+
+def train_model(train_dataloader_toefl, val_dataloader_toefl, fold_num):
     rnn_clf = RNNSequenceClassifier(num_classes=2, embedding_dim=300 + 1024 + 50, hidden_size=300, num_layers=1,
                                     bidir=True, dropout1=0.3, dropout2=0.2, dropout3=0.2)
     # Move the model to the GPU if available
@@ -133,33 +139,33 @@ def train_model():
     num_iter = 0
     for epoch in tqdm(range(num_epochs)):
         # print("Starting epoch {}".format(epoch + 1))
-        for (example_text, example_lengths, labels) in train_dataloader_toefl:
+        for (example_text, example_lengths, example_labels) in train_dataloader_toefl:
             example_text = Variable(example_text)
             example_lengths = Variable(example_lengths)
-            labels = Variable(labels)
+            example_labels = Variable(labels)
             if using_GPU:
                 example_text = example_text.cuda()
                 example_lengths = example_lengths.cuda()
-                labels = labels.cuda()
+                example_labels = example_labels.cuda()
             # predicted shape: (batch_size, 2)
             predicted = rnn_clf(example_text, example_lengths)
-            batch_loss = nll_criterion(predicted, labels)
+            batch_loss = nll_criterion(predicted, example_labels)
             rnn_clf_optimizer.zero_grad()
             batch_loss.backward()
             rnn_clf_optimizer.step()
             num_iter += 1
             # Calculate validation and training set loss and accuracy every 200 gradient updates
             if num_iter % 200 == 0:
-                precision, recall, f1, eval_accuracy, fus_f1 = test_model(rnn_clf, nll_criterion)
+                precision, recall, f1, eval_accuracy, fus_f1 = test_model(rnn_clf, nll_criterion, val_dataloader_toefl)
                 print(
                     "Iteration {}. P {}, R {}, A {}, F1 {}, MaF1 {}.".format(
                         num_iter, precision, recall, eval_accuracy, f1, fus_f1))
-                filename = f'../models/classification/TOEFL_iter_{str(num_iter)}.pt'
+                filename = f'../models/classification/TOEFL_fold_{fold_num}_iter_{num_iter}.pt'
                 torch.save(rnn_clf.state_dict(), filename)
     return rnn_clf, nll_criterion
 
 
-def test_model(rnn_clf, nll_criterion):
+def test_model(rnn_clf, nll_criterion, val_dataloader_toefl):
     avg_eval_loss, eval_accuracy, precision, recall, f1, fus_f1 = evaluate(val_dataloader_toefl, rnn_clf,
                                                                            nll_criterion, using_GPU)
     return precision, recall, f1, eval_accuracy.item(), fus_f1
@@ -177,7 +183,7 @@ def predict_toefl(rnn_clf):
 
 def write_predictions_to_answer_file(predictions):
     import data_parser
-    vtoks = data_parser.load_toefl_vtoks()
+    vtoks = data_parser.load_toefl_ptoks()
     answers = []
     for vtok in vtoks:
         answers.append(f"{vtok},{predictions[vtok]}\n")
@@ -194,3 +200,9 @@ def load_model(filename):
     rnn_clf.load_state_dict(torch.load(filename))
     rnn_clf.cuda()
     return rnn_clf
+
+
+def pred_and_write(filename):
+    clf = load_model(filename)
+    preds = predict_toefl(clf)
+    write_predictions_to_answer_file(preds)

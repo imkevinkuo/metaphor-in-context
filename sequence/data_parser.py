@@ -21,7 +21,7 @@ def load_raw_train_toefl():
             txt_id, sent_id, word_id, word = obj['id'].split("_")
             pos_tag = nltk.tag.map_tag('en-ptb', 'universal', obj['x']['stanford_postag'])
             label = obj['y']
-            pos_and_label[(txt_id, sent_id, int(word_id))] = (pos_tag, label)
+            pos_and_label[(txt_id, int(sent_id), int(word_id))] = (pos_tag, label)
 
     raw_train_toefl = []
     sentences = load_toefl_sents(TOEFL_TRAIN)

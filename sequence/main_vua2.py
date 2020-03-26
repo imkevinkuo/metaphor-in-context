@@ -4,7 +4,7 @@ from tqdm import tqdm
 from util import get_num_lines, get_pos2idx_idx2pos, index_sequence, get_vocab, embed_indexed_sequence, \
     get_word2idx_idx2word, get_embedding_matrix, write_predictions, get_performance_VUAverb_val, \
     get_performance_VUAverb_test, get_performance_VUA_test
-from util import TextDatasetWithGloveElmoSuffix as TextDataset
+from util import TextDataset as TextDataset
 from util import evaluate, predict
 from model import RNNSequenceModel
 
@@ -144,7 +144,7 @@ def train_model(train_dataloader_vua, val_dataloader_vua, fold_num):
                                                              loss_criterion, using_GPU)
                 val_loss.append(avg_eval_loss)
                 val_f1s.append(performance_matrix[:, 2])
-                print("Iteration {}. Validation Loss {}.".format(num_iter, avg_eval_loss))
+                print("Iteration {}. Validation Loss {}. {}".format(num_iter, avg_eval_loss, performance_matrix))
                 filename = f"../models/sequence/VUA_fold_{fold_num}_iter_{num_iter}.pt"
                 torch.save(RNNseq_model.state_dict(), filename)
                 # avg_eval_loss, performance_matrix = evaluate(idx2pos, train_dataloader_vua, RNNseq_model,
@@ -180,7 +180,7 @@ def train_model(train_dataloader_vua, val_dataloader_vua, fold_num):
                                                              loss_criterion, using_GPU)
                 val_loss.append(avg_eval_loss)
                 # val_f1s.append(performance_matrix[:, 2])
-                print("Iteration {}. Validation Loss {}.".format(num_iter, avg_eval_loss))
+                print("Iteration {}. Validation Loss {}. {}".format(num_iter, avg_eval_loss, performance_matrix))
                 filename = f"../models/sequence/VUA_fold_{fold_num}_iter_{num_iter}.pt"
                 torch.save(RNNseq_model.state_dict(), filename)
 
@@ -265,3 +265,9 @@ def load_model(filename):
     if using_GPU:
         RNNseq_model.cuda()
     return RNNseq_model
+
+
+def pred_and_write(filename):
+    clf = load_model(filename)
+    preds = predict_vua_allpos(clf)
+    write_preds_to_answers(preds)

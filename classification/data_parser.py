@@ -11,7 +11,6 @@ VUA_VERB_TOKS_TEST = "../corpora/VUA_corpus/verb_tokens_test.csv"
 VUA_SENTENCES_TEST = "../corpora/VUA_corpus/vuamc_corpus_test.csv"
 
 
-# We may need to run some kind of spellcheck / autocorrect on this text...
 def load_raw_train_toefl():
     pos_and_label = {}
     with jsonlines.open(f'{TOEFL_TRAIN}/toefl_skll_train_features/all_pos/P.jsonlines') as reader:
@@ -70,6 +69,16 @@ def load_raw_test_toefl():
 def load_toefl_vtoks():
     vtoks = []
     with open(f"{TOEFL_TEST}/toefl_verb_test_tokens.csv") as f:
+        lines = [line.rstrip() for line in f]
+        for line in lines:
+            txt_id, sent_id, verb_id, verb = line.split("_")
+            vtoks.append("_".join((txt_id, sent_id, verb_id)))
+    return vtoks
+
+
+def load_toefl_ptoks():
+    vtoks = []
+    with open(f"{TOEFL_TEST}/toefl_all_pos_test_tokens.csv") as f:
         lines = [line.rstrip() for line in f]
         for line in lines:
             txt_id, sent_id, verb_id, verb = line.split("_")
